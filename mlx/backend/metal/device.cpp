@@ -520,22 +520,30 @@ void CommandEncoder::end_encoding(bool wait_in_flight) {
     }
   }
 
-  encoder_->updateFence(fence_.get());
-  buffer_->addCompletedHandler([this,
-                                fence = std::move(fence_),
-                                temporaries = std::move(temporaries_),
-                                all_outputs = std::move(all_outputs_),
-                                waiting_on = std::move(waiting_on)](
-                                   MTL::CommandBuffer*) mutable {
+  struct Done {
+    NS::SharedPtr<MTL::Fence> fence;
+    std::vector<array> temporaries;
+    std::unordered_set<const void*> all_outputs;
+    std::unordered_set<NS::SharedPtr<MTL::Fence>> waiting_on;
+  };
+  // Allocate before the state moves, so a failure leaves the encoder intact.
+  auto done = std::make_shared<Done>();
+  buffer_->addCompletedHandler([this, done](MTL::CommandBuffer*) {
     std::lock_guard lk(outputs_mtx_);
-    for (auto& o : all_outputs) {
+    for (auto& o : done->all_outputs) {
       if (auto it = prev_ce_outputs_.find(o); it != prev_ce_outputs_.end()) {
-        if (it->second == fence) {
+        if (it->second == done->fence) {
           prev_ce_outputs_.erase(it);
         }
       }
     }
   });
+
+  encoder_->updateFence(fence_.get());
+  done->fence = std::move(fence_);
+  done->temporaries = std::move(temporaries_);
+  done->all_outputs = std::move(all_outputs_);
+  done->waiting_on = std::move(waiting_on);
 
   encoder_->endEncoding();
   encoder_.reset();
@@ -575,6 +583,12 @@ void CommandEncoder::commit(std::function<void()> completion) {
   // Metal locks a command buffer's residency at commit time, so attach any
   // sets created since the last commit first.
   residency_sets_.attach_new_sets(queue_.get(), sets_attached_);
+  // Make the next buffer first, so buffer_ never points at a committed one.
+  auto next = NS::RetainPtr(queue_->commandBufferWithUnretainedReferences());
+  if (!next) {
+    throw std::runtime_error(
+        "[metal::CommandEncoder] Unable to make a command buffer.");
+  }
   buffer_->addCompletedHandler(
       [&error_ = error_,
        wait_events = std::move(wait_events_),
@@ -614,7 +628,7 @@ void CommandEncoder::commit(std::function<void()> completion) {
         }
       });
   buffer_->commit();
-  buffer_ = NS::RetainPtr(queue_->commandBufferWithUnretainedReferences());
+  buffer_ = std::move(next);
   buffer_ops_ = 0;
   buffer_sizes_ = 0;
 }

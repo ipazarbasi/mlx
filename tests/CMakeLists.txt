@@ -62,3 +62,11 @@ target_link_options(tests PRIVATE ${SANITIZER_LINK_FLAGS})
 
 doctest_discover_tests(tests)
 add_test(NAME tests COMMAND tests)
+
+if(MLX_BUILD_METAL)
+  add_executable(alloc_failure_tests alloc_failure_tests.cpp)
+  target_link_libraries(alloc_failure_tests PRIVATE mlx doctest)
+  target_compile_options(alloc_failure_tests PRIVATE ${SANITIZER_COMPILE_FLAGS})
+  target_link_options(alloc_failure_tests PRIVATE ${SANITIZER_LINK_FLAGS})
+  add_test(NAME alloc_failure_tests COMMAND alloc_failure_tests)
+endif()

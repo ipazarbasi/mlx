@@ -29,6 +29,9 @@ runs:
 
         echo "::group::Run CPP tests"
         ./build/*/mlx.core/tests/tests
+        if ${{ inputs.toolkit != 'cpu' }} ; then
+          ./build/*/mlx.core/tests/alloc_failure_tests
+        fi
         echo "::endgroup::"
 
         echo "::group::Run distributed tests"
